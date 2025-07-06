@@ -1,0 +1,8 @@
+# Ignoring MASM611 folder, build files and .exes from my working directory
+
+MASM611/
+
+*.obj
+*.OBJ
+*.exe
+*.EXE
