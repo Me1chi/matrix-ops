@@ -257,7 +257,6 @@ skip_line_feed ENDP
 ; If EOF or a blank space is read, CF flag become 1, else, remains 0
 read_row PROC NEAR
 
-    PUSH AX
     PUSH BX
     PUSH CX
     PUSH DX
@@ -332,7 +331,6 @@ rr_ending:
     ENDIF
 
     POP BX
-    POP AX
 
     RET
 
@@ -537,8 +535,8 @@ spf_exponent_test_loop:
 spf_exponent_test_loop_end:
     MOV AX, 1
 
-    MOV [BP - 2], CX
-    AND [BP - 2], 00FFh ; zera o byte mais alto e
+    MOV [BP - 10], CX
+    AND [BP - 10], 00FFh ; zera o byte mais alto e
                         ; pronto, guardei o CL
 
 spf_divisor_adjust:
@@ -570,7 +568,7 @@ spf_print_minus:  ; LOL AGORA QUE EU VI
 spf_is_not_minus:
     XOR CH, CH 
 
-    MOV CX, [BP - 2]
+    MOV CX, [BP - 10]
     INC CX
 
 spf_print_loop:
@@ -650,6 +648,82 @@ rb_ending:
     RET
 
 row_to_buffer ENDP
+
+
+; Print a matrix INTO A FILE
+; Arguments:
+;   BX = rows number
+;   CX = collumns number
+;   SI = matrix
+;   DI = temporary_buffer
+;   DS:DX = file name
+print_matrix PROC NEAR
+
+    PUSH BP
+    MOV BP, SP
+
+    PUSH AX
+
+    SUB SP, 6 ; [BP - 4/6/8]
+    ; 4 = collumns number
+    ; 6 = DI (que guarda o buffer de string)
+    ; 8 = rows number
+
+    MOV AL, 01h ; Write only
+    CALL open_file
+    ; AX now has the file handle
+
+    MOV DX, DI
+
+    MOV [BP - 8], BX
+    MOV BX, AX
+
+    MOV [BP - 4], CX
+    MOV [BP - 6], DI
+
+pm_main_loop:
+    CALL row_to_buffer ; Returns CX = 0
+
+    pm_strlen_begin:
+        MOV DI, [BP - 6]
+        CMP [DI + CX], NULLCIFRAO
+        JE pm_strlen_end
+        INC CX
+
+        JMP pm_strlen_begin
+
+    pm_strlen_end:
+        MOV [DI + CX], LF
+        INC CX ; BX, CX and DX ready
+
+        XOR AX, AX
+        MOV AH, 40h
+
+        INT 21h
+
+    pm_row_written:
+
+    MOV CX, [BP - 4]
+    MOV DI, [BP - 6]
+
+    DEC [BP - 8]
+    CMP [BP - 8], 0
+    JNE pm_main_loop
+
+pm_main_loop_end:
+
+    CALL close_file
+
+pm_ending:
+    ADD SP, 6
+
+    POP AX
+
+    POP BP
+
+    RET
+
+print_matrix ENDP
 
 ; Fim do programa
 
