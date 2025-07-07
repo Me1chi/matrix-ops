@@ -52,33 +52,19 @@ teste_funcao db "12430sdfsuidhf",0
 .code
     .startup
 
-    MOV AL, 00h
-    LEA DX, nome_arq_dados
-    CALL open_file
+    LEA DI, matriz
+    CALL read_matrix
+    JC main_bad_ending
 
-le_linha_teste:
-    CALL read_row
-    PUSHF
+    MOV BX, qtd_linhas
+    MOV CX, qtd_colunas
+    LEA SI, matriz
+    LEA DI, buffer_linha
+    LEA DX, nome_arq_res
 
-    LEA DX, buffer_linha
+    call print_matrix
 
-    PUSH AX
-
-    MOV AH, 09h
-
-    INT 21h
-
-    MOV DL, CR
-    MOV AH, 2
-    INT 21h
-    MOV DL, LF
-    MOV AH, 2
-    INT 21h
-
-    POP AX
-    POPF
-
-    JNC le_linha_teste
+main_bad_ending:
 
     .exit
 
@@ -370,7 +356,7 @@ pr_loop: ; Tem que chamar atoi primeiro
     INC DI
     INC DI
 
-    CMP [BX], 3Bh ; The ';' char
+    CMP byte ptr[BX], 3Bh ; The ';' char
     JNE pr_not_semicolon
 
     pr_is_semicolon:
@@ -469,6 +455,8 @@ rm_bad_ending:
 
     STC
 
+    ADD SP, 2
+
 rm_end:
     MOV qtd_linhas, CX
     MOV BX, AX
@@ -491,118 +479,181 @@ read_matrix ENDP
 ; Arguments:
 ;   AX = the number
 ;   DI = the string adress
-
 sprintf PROC NEAR
 
-    PUSH BP
-    MOV BP, SP
+    PUSH BX
+    PUSH CX
+    PUSH DX
+    PUSH SI
 
-    PUSH BX ; BX eh o divisor
-    PUSH CX ; CL eh o contador de potencias de 10
-            ; CH eh o que vai guardar a flag de negativo - = 1, + = 0
-    PUSH DX ; DX eh natural pra divisao
-    PUSH SI ; Fica de extra ai
-
-    SUB SP, 2 ; Vou guardar o CX aqui
-
-spf_negative_test:
-    MOV CH, 0
+spr_beginning:
     CMP AX, 0
-    JS spf_is_negative
+    JNS spr_plus
 
-    JMP spf_is_positive_or_zero
-spf_is_negative:
-    MOV CH, 1 ; Is negative 
+spr_minus:
+    MOV [DI], '-'
+    INC DI
     NEG AX
 
-spf_is_positive_or_zero:
+spr_plus:
 
-; Lets figure the 10 exponent right now
-    MOV BX, 10
-    XOR CL, CL
+    XOR CX, CX ; CX = 0
+    MOV BX, 10 ; BX = 10
 
-    MOV SI, AX
-spf_exponent_test_loop:
+spr_stacking_loop:
     XOR DX, DX
-    DIV BX
+    DIV BX ; AX = DX:AX/BX, DX = DX:AX%BX
 
-    CMP AX, 0
-    JE spf_exponent_test_loop_end
-    ; Else...
-    INC CL
-    JMP spf_exponent_test_loop
-
-spf_exponent_test_loop_end:
-    MOV AX, 1
-
-    MOV [BP - 10], CX
-    AND [BP - 10], 00FFh ; zera o byte mais alto e
-                        ; pronto, guardei o CL
-
-spf_divisor_adjust:
-    CMP CL, 0
-    JE spf_divisor_adjust_end
-    DEC CL
-    MUL BX
-
-    JMP spf_divisor_adjust
-
-spf_divisor_adjust_end:
-    MOV BX, AX
-    MOV AX, SI
-    XOR DX, DX
-
-    ; Agora o AX tem o valor real novamente
-    ; BX eh o divisor certo
-    ; DX fica livre
-    ; Vou testar o negativo e colocar o sinal (se precisar)
-    ; Dai pra frente o CX vai estar livre tambem
-
-    CMP CH, 0
-    JE spf_is_not_minus
-
-spf_print_minus:  ; LOL AGORA QUE EU VI
-    MOV [DI], '-' ; QUE PODIA FAZER ISSO ANTES
-    INC DI
-
-spf_is_not_minus:
-    XOR CH, CH 
-
-    MOV CX, [BP - 10]
+    ADD DX, 30h
+    PUSH DX
     INC CX
 
-spf_print_loop:
-    DIV BX ; After that: AX = AX/BX & DX = AX%BX
+    CMP AX, 0
+    JE spr_stacking_loop_end
 
-    ADD AL, 30h
-    MOV [DI], AL
+    JMP spr_stacking_loop
+
+spr_stacking_loop_end: ; ex: Para 714, na pilha tem 4 - 1 - 7 (TOPO PRA CA)
+
+    POP BX
+    MOV [DI], BL
     INC DI
 
-    MOV AX, BX
-    MOV BX, 10
-    DIV BX
-    MOV BX, AX
+    LOOP spr_stacking_loop_end
 
-    MOV AX, DX
-    LOOP spf_print_loop
-
-spf_print_loop_end:
+;spr_null_terminating:
+;    MOV [DI], NULLCIFRAO
+;    INC DI
+;    VAMO DEIXAR PRO CHAMADOR DA FUNCAO FAZER ISSO
 
 
 spf_ending:
-
-    ADD SP, 2
-
     POP SI
     POP DX
     POP CX
     POP BX
 
-    POP BP
-
-    RET
 
 sprintf ENDP
+
+;; This function will take a number in compliment of 2
+;; and format it to a string (in decimal, for sure)
+;;
+;; Arguments:
+;;   AX = the number
+;;   DI = the string adress
+;
+;sprintf PROC NEAR
+;
+;    PUSH BP
+;    MOV BP, SP
+;
+;    PUSH BX ; BX eh o divisor
+;    PUSH CX ; CL eh o contador de potencias de 10
+;            ; CH eh o que vai guardar a flag de negativo - = 1, + = 0
+;    PUSH DX ; DX eh natural pra divisao
+;    PUSH SI ; Fica de extra ai
+;
+;    SUB SP, 2 ; Vou guardar o CX aqui
+;
+;spf_negative_test:
+;    MOV CH, 0
+;    CMP AX, 0
+;    JS spf_is_negative
+;
+;    JMP spf_is_positive_or_zero
+;spf_is_negative:
+;    MOV CH, 1 ; Is negative 
+;    NEG AX
+;
+;spf_is_positive_or_zero:
+;
+;; Lets figure the 10 exponent right now
+;    MOV BX, 10
+;    XOR CL, CL
+;
+;    MOV SI, AX
+;spf_exponent_test_loop:
+;    XOR DX, DX
+;    DIV BX
+;
+;    CMP AX, 0
+;    JE spf_exponent_test_loop_end
+;    ; Else...
+;    INC CL
+;    JMP spf_exponent_test_loop
+;
+;spf_exponent_test_loop_end:
+;    MOV AX, 1
+;
+;    MOV [BP - 10], CX
+;    AND [BP - 10], 00FFh ; zera o byte mais alto e
+;                        ; pronto, guardei o CL
+;
+;spf_divisor_adjust:
+;    CMP CL, 0
+;    JE spf_divisor_adjust_end
+;    DEC CL
+;    MUL BX
+;
+;    JMP spf_divisor_adjust
+;
+;spf_divisor_adjust_end:
+;    MOV BX, AX
+;    MOV AX, SI
+;    XOR DX, DX
+;
+;    ; Agora o AX tem o valor real novamente
+;    ; BX eh o divisor certo
+;    ; DX fica livre
+;    ; Vou testar o negativo e colocar o sinal (se precisar)
+;    ; Dai pra frente o CX vai estar livre tambem
+;
+;    CMP CH, 0
+;    JE spf_is_not_minus
+;
+;spf_print_minus:  ; LOL AGORA QUE EU VI
+;    MOV [DI], '-' ; QUE PODIA FAZER ISSO ANTES
+;    INC DI
+;
+;spf_is_not_minus:
+;    XOR CH, CH 
+;
+;    MOV CX, [BP - 10]
+;    INC CX
+;
+;spf_print_loop:
+;    DIV BX ; After that: AX = AX/BX & DX = AX%BX
+;
+;    ADD AL, 30h
+;    MOV [DI], AL
+;    INC DI
+;
+;    MOV AX, BX
+;    MOV BX, 10
+;    DIV BX
+;    MOV BX, AX
+;
+;    MOV AX, DX
+;    LOOP spf_print_loop
+;
+;spf_print_loop_end:
+;
+;
+;spf_ending:
+;
+;    ADD SP, 2
+;
+;    POP SI
+;    POP DX
+;    POP CX
+;    POP BX
+;
+;    POP BP
+;
+;    RET
+;
+;sprintf ENDP
 
 
 ; Format an integer matrix row, into a printable buffer '$' terminated
@@ -686,14 +737,15 @@ pm_main_loop:
 
     pm_strlen_begin:
         MOV DI, [BP - 6]
-        CMP [DI + CX], NULLCIFRAO
+        CMP [DI], NULLCIFRAO
         JE pm_strlen_end
         INC CX
+        INC DI
 
         JMP pm_strlen_begin
 
     pm_strlen_end:
-        MOV [DI + CX], LF
+        MOV [DI], LF
         INC CX ; BX, CX and DX ready
 
         XOR AX, AX
@@ -706,7 +758,7 @@ pm_main_loop:
     MOV CX, [BP - 4]
     MOV DI, [BP - 6]
 
-    DEC [BP - 8]
+    DEC word ptr[BP - 8]
     CMP [BP - 8], 0
     JNE pm_main_loop
 
