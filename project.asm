@@ -602,8 +602,54 @@ spf_ending:
 
     POP BP
 
+    RET
+
 sprintf ENDP
 
+
+; Format an integer matrix row, into a printable buffer '$' terminated
+; Arguments:
+;   CX = collumns number
+;   SI = matrix[i]
+;   DI = buffer (string)
+;
+; Return:
+;  CX = 0
+;  SI = matrix[i + 1]
+;  DI = ?????????
+;
+; e.g: the row 4 3 -1 7 becomes 4;3;-1;7$
+row_to_buffer PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH DX
+
+rb_print_loop:
+    MOV AX, [SI]
+    INC SI
+    INC SI
+
+    CALL sprintf
+
+    MOV [DI], 3Bh ; Caractere ';'
+    INC DI
+
+    LOOP rb_print_loop
+
+rb_final_adjust:
+    DEC DI
+    MOV [DI], NULLCIFRAO
+    INC DI
+
+rb_ending:
+    POP DX
+    POP BX
+    POP AX
+
+    RET
+
+row_to_buffer ENDP
 
 ; Fim do programa
 
