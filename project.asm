@@ -3,6 +3,14 @@
 .data
 
 ; Coisas pra facilitar a vida
+
+TARGET_POSIX EQU 1
+; Criei essa variavel porque tem uma peculiaridade no terminador
+; de linha que difere entre os sistemas que seguem o padrao POSIX
+; e o Windows, especificamente. Sabendo disso, caso o arquivo de
+; dados seja escrito no Linux/MacOS, tem que deixar esse EQU 1.
+; Se for no Windows, coloca um 0.
+
 CR EQU 13
 LF EQU 10
 NULLCIFRAO EQU 36
@@ -17,12 +25,12 @@ nome_arq_res db "RESULT.TXT",NULL
 
 handle_dados dw ?
 handle_expr dw ?
-hanlde_res dw ?
+handle_res dw ?
 
 read_buffer db ? ; AQUI EH IMPORTANTE, TODA LEITURA VEM PRA CA
 
 ; Buffers de dados
-buffer_linha db 140 DUP(?) ; 20 colunas, 6 digitos no maximo em cada, 19 semicolons = 139, +1 pra deixar um '\0' no final
+buffer_linha db 140 DUP(?),NULLCIFRAO ; 20 colunas, 6 digitos no maximo em cada, 19 semicolons = 139, +1 pra deixar um '\0' no final
 
 matriz dw 2000 DUP(?) ; MAX_LINHAS * MAX_COLUNAS,
 
@@ -30,7 +38,9 @@ matriz dw 2000 DUP(?) ; MAX_LINHAS * MAX_COLUNAS,
 qtd_colunas dw ? ; Aqui vai a quantidade real de colunas que vao ser lidas do arquivo
 qtd_linhas dw ? ; Eh bom saber a quantidade de linhas tambem
 
-
+error_flag db ? ; 1-Numero de colunas errado
+                ; 2-Referencia invalida
+                ; 3-Operacao invalida
 
 ; Area de testes
 
@@ -40,26 +50,33 @@ teste_funcao db "12430sdfsuidhf",0
 .code
     .startup
 
-    MOV read_buffer, 63 ; 1
-    call eh_numero
-    JC fim_main
-    JS fim_neg_main
+    MOV AL, 00h
+    LEA DX, nome_arq_dados
+    CALL open_file
 
-    ADD DL, '0'
-    MOV AH, 02h
+le_linha_teste:
+    CALL read_row
+    PUSHF
+
+    LEA DX, buffer_linha
+
+    PUSH AX
+
+    MOV AH, 09h
+
     INT 21h
-    JMP fim_main
 
-fim_neg_main:
-    MOV DL, 'N'
-    MOV AH, 02h
+    MOV DL, CR
+    MOV AH, 2
+    INT 21h
+    MOV DL, LF
+    MOV AH, 2
     INT 21h
 
-fim_main:
+    POP AX
+    POPF
 
-    LEA BX, teste_funcao
-    CALL atoi
-
+    JNC le_linha_teste
 
     .exit
 
@@ -75,6 +92,9 @@ fim_main:
 ;
 ; so pra deixar anotado, o provavel uso vai ser com um
 ; buffer de linha lida
+;
+; Vale lembrar tambem que no final o BX vai apontar
+; pro caractere seguinte ao numero
 atoi PROC NEAR
     PUSH SI ; Flag de negativo
     PUSH DI ; Tenho que passar o DL pra ele
@@ -85,26 +105,26 @@ atoi PROC NEAR
     XOR AX, AX
     XOR DX, DX
 
-teste_negativo:
+atoi_teste_negativo:
     MOV DL, [BX]
     call eh_numero
-    JC fim_def
-    JNS nao_eh_neg
+    JC atoi_fim_def
+    JNS atoi_nao_eh_neg
 
-eh_negativo:
+atoi_eh_negativo:
     MOV SI, 0
     INC BX
-    JMP begin_loop
+    JMP atoi_begin_loop
 
-nao_eh_neg:
+atoi_nao_eh_neg:
     MOV SI, 1
-    JMP begin_loop
+    JMP atoi_begin_loop
 
-begin_loop:
+atoi_begin_loop:
     MOV DL, [BX]
     call eh_numero
 
-    JC fim_loop
+    JC atoi_fim_loop
     ; aqui pra baixo supoe que tudo eh numero, se tiver
     ; escrito "43-222"; por ex., a culpa nao eh minha...
 
@@ -114,16 +134,16 @@ begin_loop:
     ADD AX, DI
 
     INC BX
-    JMP begin_loop
+    JMP atoi_begin_loop
 
-fim_loop:
+atoi_fim_loop:
 
     CMP SI, 1
-    JZ fim_def
+    JZ atoi_fim_def
 
     NEG AX
 
-fim_def:
+atoi_fim_def:
 
     POP DX
     POP CX
@@ -147,21 +167,21 @@ eh_numero PROC NEAR
     AND AH, 7Eh ; zera a carry de flag e de negativo
 
     CMP DL, '-'
-    JE sobe_flag_neg ; Se for um sinal de menos, arruma a flag
+    JE eh_numero_sobe_flag_neg ; Se for um sinal de menos, arruma a flag
 
     SUB DL, 30H ; DL already holds the number
     CMP DL, 10
-    JB fim
-    JMP nao_eh_num
+    JB eh_numero_fim
+    JMP eh_numero_nao_eh_num
 
-sobe_flag_neg:
+eh_numero_sobe_flag_neg:
     OR AH, 80h
-    JMP fim
+    JMP eh_numero_fim
 
-nao_eh_num:
+eh_numero_nao_eh_num:
     OR AH, 01h
 
-fim:
+eh_numero_fim:
 
     SAHF ; Volta as flags pro lugar
 
@@ -172,15 +192,227 @@ fim:
 eh_numero ENDP
 
 
+; Here and below I will use LOCAL in my subroutines, so that I can repeat my labels
+
+; It will open a file
+; THE INPUT IS AL with read or write, DX must have the file name
+; AX will have the file handle
+open_file PROC NEAR
+
+    PUSH CX ; ctyme specifies INT 21h/3Dh returns something in CL
+
+    MOV AH, 3Dh
+    INT 21h
+
+    POP CX
+
+    RET
+
+open_file ENDP
+
+; It will close the file which handle is in BX
+close_file PROC NEAR
+
+    PUSH AX
+    MOV AH, 3Eh
+    INT 21h
+
+    POP AX
+
+    RET
+
+close_file ENDP
+
+; Passa pelo AX o handle do arquivo
+skip_line_feed PROC NEAR
+
+    PUSHF
+    PUSH BX
+    PUSH CX
+    PUSH DX
+
+    MOV BX, AX
+    MOV AH, 42h
+    MOV AL, 01h
+
+    MOV CX, 00h
+    MOV DX, 01h
+
+    INT 21h
+
+    MOV AX, BX
+
+    POP DX
+    POP CX
+    POP BX
+    POPF
+
+    RET
+
+skip_line_feed ENDP
+
+; AX MUST HAVE THE FILE HANDLE
+; If EOF or a blank space is read, CF flag become 1, else, remains 0
+read_row PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH CX
+    PUSH DX
+
+    ; These will be used to copy the string
+    PUSH SI
+    PUSH DI
+
+    LEA DX, read_buffer
+    LEA DI, buffer_linha
+
+    CLC
+
+rr_file_is_open:
+    MOV BX, AX
+    MOV CX, 1
+
+rr_begin_loop:
+    MOV AH, 3Fh
+
+    INT 21h
+    CMP AX, 0
+    JE rr_carriage_return_carry
+
+    MOV AL, [read_buffer]
+    CMP AL, 20h ; Blank space char
+    JE rr_carriage_return_carry
+
+; AQUI EH PRA ELE CONSEGUIR LER CERTO SENDO O ARQUIVO ESCRITO NO LINUX/MACOS
+; OU NO WINDOWS
+    IF TARGET_POSIX EQ 1
+        CMP AL, LF
+        JE rr_carriage_return
+
+    ELSE
+        CMP AL, CR
+        JE rr_carriage_return
+    ENDIF
+
+    MOV [DI], AL
+    INC DI
+
+    JMP rr_begin_loop
+
+rr_carriage_return_carry:
+
+    STC
+
+rr_carriage_return:
+
+    MOV [DI], NULLCIFRAO
+
+    JMP rr_ending
+
+rr_ending:
+
+    POP DI
+    POP SI
+    POP DX
+    POP CX
+    POP BX
+
+    MOV AX, BX
+
+    ; Mesma coisa de antes
+    IF TARGET_POSIX EQ 0
+        CALL skip_line_feed
+    ENDIF
+
+    POP AX
+
+    RET
+
+read_row ENDP
 
 
+; This will set the CF = 1 if there's an error, also the error flag will 1.
+; So it can be print the right message.
+;
+; Function takes:
+; SI = buffer_linha
+; DI = matrix[i] TEM QUE ESTAR NA LINHA CORRETA
+;
+; Returns: 
+; DI = matrix[i + 1]
+; or error
+;
+parse_row PROC NEAR
+
+    CLC
+
+    PUSH AX ; BP - 2
+    PUSH BX ; BP - 4
+    PUSH CX ; BP - 6
+    PUSH DX ; BP - 8
+
+pr_beginning:
+
+    XOR CX, CX
+
+    MOV BX, SI
+
+pr_loop: ; Tem que chamar atoi primeiro
+    CALL atoi
+
+    MOV [DI], AX
+    INC DI
+    INC DI
+
+    CMP [BX] 59 ; The ';' char
+    JNE pr_not_semicolon
+
+    pr_is_semicolon:
+    INC CX
+
+    pr_not_semicolon:
+
+    CMP [BX] NULLCIFRAO
+    JE pr_end_loop
+
+    INC BX
+
+    JMP pr_loop
+
+pr_end_loop:
+
+    INC CX
+    CMP CX [qtd_colunas]
+    JE pr_ending
+
+    pr_carry:
+    STC
+    MOV error_flag, 1
+
+pr_ending:
+    POP DX
+    POP CX
+    POP BX
+    POP AX
+
+    RET
+
+parse_row ENDP
+
+; It will open the file, do its things and close it
+read_matrix PROC NEAR
+
+rm_open_file:
+
+    MOV AL, 00h
+    LEA DX, nome_arq_dados
+    CALL open_file ; Handle do arquivo ta no AX
+
+    
 
 
-read_matriz PROC NEAR
-
-
-
-read_matriz ENDP
+read_matrix ENDP
 
 
 
