@@ -44,6 +44,8 @@ error_flag db ? ; 1-Numero de colunas errado
                 ; 2-Referencia invalida
                 ; 3-Operacao invalida
 
+line_ending db CR,LF
+
 ; Area de testes
 
 teste_funcao db "12430sdfsuidhf",0
@@ -603,9 +605,31 @@ print_matrix PROC NEAR
     ; 6 = DI (que guarda o buffer de string)
     ; 8 = rows number
 
-    MOV AL, 01h ; Write only
+    MOV AL, 02h ; Read and write
     CALL open_file
     ; AX now has the file handle
+    ; or CF is set
+
+    JNC pm_file_exists
+
+pm_file_create:
+
+    PUSH DX
+
+    LEA DX, nome_arq_res
+    CALL create_file
+
+    POP DX
+
+    JMP pm_file_create_jump_label
+
+pm_file_exists:
+
+    CALL move_handle_ptr_to_end
+    ; Now it won't overwrite the file content
+
+pm_file_create_jump_label:
+
 
     MOV DX, DI
 
@@ -647,6 +671,34 @@ pm_main_loop:
 
 pm_main_loop_end:
 
+
+pm_print_line_ending:
+
+    PUSH AX
+    PUSH CX
+    PUSH DX
+
+; Here it will print a line ending everytime a matrix is print
+; So the RESULT.TXT will be less painful to read
+
+    MOV AH, 40h
+    MOV CX, 2 ; 2 Bytes in the TARGET_POSIX = 0 case
+    LEA DX, line_ending
+
+    IF TARGET_POSIX EQ 1
+        MOV CX, 1 ; Will print one 1 byte...
+        INC DX ; ...And it will be the second one (LF)
+    ENDIF
+
+    INT 21h
+
+    POP DX
+    POP CX
+    POP AX
+
+
+pm_file_closing:
+
     CALL close_file
 
 pm_ending:
@@ -659,6 +711,65 @@ pm_ending:
     RET
 
 print_matrix ENDP
+
+; This function is meant to always lseek
+; to the end of the file, so it can append
+; when printing, instead of overwriting
+; AX = Handle
+; This won't return anything and AX will
+; keep the handle
+
+move_handle_ptr_to_end PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH CX
+    PUSH DX
+
+move_pointer:
+    MOV BX, AX ; Passa o handle pro BX
+
+    MOV AH, 42h
+    MOV AL, 02h ; lseek a partir do fim do arquivo
+
+    MOV CX, 00h
+    MOV DX, 00h ; Offset = 0
+
+    INT 21h
+
+move_pointer_done:
+
+    POP DX
+    POP CX
+    POP BX
+    POP AX
+
+    RET
+
+move_handle_ptr_to_end ENDP
+
+; Creates a file with a given name
+; (Do not use it if there exist an imporant file w the same name)
+;
+; Arguments:
+;   DS:DX = File name
+;
+; It will NOT return the handle, you have to open it again
+; with the opening function
+create_file PROC NEAR
+    PUSH AX
+    PUSH CX
+
+    MOV AH, 3Ch
+    MOV CX, 0
+
+    INT 21h
+
+    PUSH CX
+    PUSH AX
+
+    RET
+create_file ENDP
 
 ; Fim do programa
 
