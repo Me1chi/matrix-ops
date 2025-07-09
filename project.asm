@@ -30,7 +30,7 @@ handle_res dw ?
 read_buffer db ? ; AQUI EH IMPORTANTE, TODA LEITURA VEM PRA CA
 
 ; Buffers de dados
-buffer_linha db 140 DUP(?),NULLCIFRAO ; 20 colunas, 6 digitos no maximo em cada, 19 semicolons = 139, +1 pra deixar um '\0' no final
+buffer_linha db 140 DUP(?),NULLCIFRAO ; 20 colunas, 6 digitos no maximo em cada, 19 semicolons = 139, +1 pra deixar um '\0' no final + 1 pro caso do Windows
 
 matriz dw 2000 DUP(?) ; MAX_LINHAS * MAX_COLUNAS,
 
@@ -652,6 +652,14 @@ pm_main_loop:
         JMP pm_strlen_begin
 
     pm_strlen_end:
+
+        IF TARGET_POSIX EQ 0
+            MOV byte ptr [DI], CR
+            INC CX ; Aqui eu vou reservar mais um byte no
+            INC DI
+                   ; buffer_linha, pra evitar invadir memoria
+        ENDIF
+
         MOV byte ptr [DI], LF
         INC CX ; BX, CX and DX ready
 
