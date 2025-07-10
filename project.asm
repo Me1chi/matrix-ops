@@ -942,13 +942,13 @@ iterator PROC NEAR
 
     CALL prepare_rows
 
-    CMP AX, 00h
+    CMP AX, 0000h
     JE it_case_0 ; No constant
 
-    CMP AX, 10h
+    CMP AX, 0100h
     JE it_case_1 ; src1 constant
 
-    CMP AX, 01h
+    CMP AX, 0001h
     JE it_case_2 ; src2 costant
 
     CMP AX, 0101h
