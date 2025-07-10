@@ -1349,10 +1349,17 @@ ep_good_ending:
     MOV SI, [BP - 10]
 
     MOV AX, CX
+    JMP ep_whole_ending_but_good
 
 ep_whole_ending:
-
     ADD SP, 6
+    STC
+JMP ep_dont_double_free
+
+ep_whole_ending_but_good:
+    ADD SP, 6
+
+ep_dont_double_free:
 
     POP DX
     POP CX
@@ -1379,7 +1386,7 @@ wfe_a_little_inc:
 
 wfe_loop_begin:
     CMP byte ptr [BX], NULLCIFRAO
-    JMP wfe_good_ending
+    JE wfe_good_ending
 
     CMP byte ptr [BX], ']'
     JE wfe_bad_ending
