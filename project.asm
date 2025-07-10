@@ -66,6 +66,7 @@ teste_funcao db "12430sdfsuidhf",0
     JC main_bad_ending
 
     ; Operate matrix test
+    MOV operation, '%'
     MOV AH, 0
     MOV AL, 1
     MOV BX, 0
@@ -920,18 +921,25 @@ it_case_0:
 
     JMP it_def_ending
 
-; Gambiarra
+it_case_2: ; Removi a minh gambiarra do commit anterior
+           ; porque dava pau quando a op. nao era comutativa
+    MOV op_source_two, SI
+    LEA SI, op_source_two
 
+    it_case_2_loop:
+        CALL operate
+        ADD BX, 2
+        ADD DI, 2
 
-it_case_2: ; Swap DI <-> SI, to use the same case
-    MOV AX, SI
-    MOV SI, DI
-    MOV DI, AX
+        LOOP it_case_2_loop
 
-    JMP it_case_1
+    it_case_2_loop_end:
+
+    MOV SI, op_source_two
+
+    JMP it_def_ending
 
 it_case_1:
-
     MOV op_source_one, DI
     LEA DI, op_source_one
 
@@ -975,26 +983,131 @@ it_def_ending:
     RET
 iterator ENDP
 
-; WARNING ;
-;
-; THE FUCNTION BELOW IS THIS WAY FOR TESTING PURPOSES
-; IT WILL BE FIXED 
-;
+
 ; This function applies an operation in the following way:
+; [BX]  = [DI]   + [SI], meaning...
 ; [dst] = [src1] + [src2]
+;
+; Note: The operation done symbol must be
+; put into the operation global variable
+;
+; NOTE PART TWO AND VERY IMPORTANT:
+; If trying to perform a division by 0 (zero), it will
+; just output 0 (zero) to the dst, no errors will be
+; emmited, neither the program will crash. May you
+; feel warned...
 operate PROC NEAR
 
     PUSH AX
     PUSH CX
     PUSH DX
 
-; TESTING
-    MOV AX, word ptr [DI]
-    IMUL word ptr [SI]
+    MOV AX, [DI]
+    MOV CX, [SI]
+    XOR DX, DX
 
-    MOV word ptr [BX], AX
+op_switch:
+    ; Dealing with NO possible division by zero operations first
 
-; TESTING
+    CMP operation, '+'
+    JE op_sum
+
+    CMP operation, '-'
+    JE op_sub
+
+    CMP operation, '*'
+    JE op_imul
+
+    CMP operation, '&'
+    JE op_and
+
+    CMP operation, '|'
+    JE op_or
+
+    CMP operation, '^'
+    JE op_xor
+
+op_dealing_with_possible_div_by_zero:
+    CMP CX, 0
+    JNE op_no_division_by_zero_all_ok
+    MOV [BX], 0
+    JMP op_no_changes_end
+
+op_no_division_by_zero_all_ok: ; Perfect, no more division by 0
+    CMP operation, '?' ; Easter egg hehehe
+    JE op_remainder
+
+    CWD ; Change word to double word, my remainders were
+        ; weird and I found it surfing the forums
+
+    CMP operation, '/'
+    JE op_idiv
+
+    CMP operation, '%'
+    JE op_signed_remainder
+
+    JMP op_no_changes_end
+
+op_sum:
+    ADD AX, CX
+
+op_sum_end:
+    JMP op_def_end
+
+op_sub:
+    SUB AX, CX
+
+op_sub_end:
+    JMP op_def_end
+
+op_imul:
+    IMUL CX
+
+op_imul_end:
+    JMP op_def_end
+
+op_idiv:
+    IDIV CX
+
+op_idiv_end:
+    JMP op_def_end
+
+op_remainder:
+    DIV CX
+    MOV AX, DX
+
+op_remainder_end:
+    JMP op_def_end
+
+op_signed_remainder:
+    IDIV CX
+    MOV AX, DX
+
+op_signed_remainder_end:
+    JMP op_def_end
+
+op_and:
+    AND AX, CX
+
+op_and_end: ; lol and and
+    JMP op_def_end
+
+op_or:
+    OR AX, CX
+
+op_or_end:
+    JMP op_def_end
+
+op_xor:
+    XOR AX, CX
+
+op_xor_end:
+    JMP op_def_end
+
+op_def_end:
+    MOV [BX], AX
+
+op_no_changes_end:
 
     POP DX
     POP CX
