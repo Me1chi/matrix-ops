@@ -11,6 +11,13 @@ TARGET_POSIX EQU 1
 ; dados seja escrito no Linux/MacOS, tem que deixar esse EQU 1.
 ; Se for no Windows, coloca um 0.
 
+UNSIGNED_DIVISION EQU 0
+; This will turn the unsigned division operator (?) on
+; and off, I created this to work around the remainder
+; specs (Resto da divisao -> SIGNED OR NOT?). If it is
+; unsigned, congratulations, one more op. If it is not,
+; just turn the switch off.
+
 CR EQU 13
 LF EQU 10
 NULLCIFRAO EQU 36
@@ -51,6 +58,10 @@ line_ending db CR,LF
 
 operation db ? ; Each operation is represented by its 
                ; C op. character (e.g. & == AND)
+
+matrix_must_be_print db 0
+
+row_counter db 0
 
 ; Area de testes
 
@@ -790,8 +801,8 @@ create_file PROC NEAR
 
     INT 21h
 
-    PUSH CX
-    PUSH AX
+    POP CX
+    POP AX
 
     RET
 create_file ENDP
@@ -904,7 +915,7 @@ iterator PROC NEAR
     CMP AX, 01h
     JE it_case_2 ; src2 costant
 
-    CMP AX, 11h
+    CMP AX, 0101h
     JE it_case_3 ; both constants
 
 it_case_0:
@@ -1115,6 +1126,320 @@ op_no_changes_end:
 
     RET
 operate ENDP
+
+
+; This function won't require any operands
+; but it suppose the file is open for reading at least
+; it will set the correct values for:
+;   BX = Dst
+;   DI = Src1
+;   SI = Src2
+;
+; Annnd.... 
+;   DS:operation = the op. to be done
+;   DS:matrix_must_be_print = true/false (refer to README)
+;
+; WARNING !!!
+;   If the carry flag is set == ERROR:
+;     BX = Line with the error
+;     DI = Wrong operation char or impossible reference
+;     SI = If = 1, syntax error, If = 0, look at DI
+;
+; Moreover:
+;   The function require the file to be well written,
+;   it can correct logic mistakes, but not syntax.
+;   That said, when I find a bracket, I will assume
+;   it is closed elsewhere. Whatever I can, in fact,
+;   detect this kind of mistakes easily, but it won't
+;   be pertinent to this project. Sorry ;(
+;   *PS: I created a function to parse for things like
+;   open but not closed brackets. I'm now using in this
+;   function
+;
+; Also:
+;   It will report the first found mistake, NOT ALL of them
+;   Remember, I'm not the god of Assembly, YET ;)
+expression_parser PROC NEAR
+
+; Colinha pra eu lembrar o formato da expressao:
+; *[atoi_1]=[atoi_2]~[atoi_3]$
+
+    PUSH BP
+    MOV BP, SP
+
+    PUSH CX ; [BP - 2]
+    PUSH DX ; [BP - 4]
+
+    MOV CX, 0101h ; Assuming both srcs are constants
+
+    SUB SP, 6 ; [BP - 6/8/10] -> dst/src1/src2
+
+; Mais anotacao minha:
+;   Vou passar a funcao de BX pro DX pq o
+;   atoi por alguma razao do alem usa o BX,
+;   e isso mostra porque a escolha da passagem dos
+;   argumentos tem que ser tecnica, nao levada
+;   pelo senso de humor...
+;   PS: MUDEI DE IDEIA E PASSEI PRA PILHA
+
+ep_test_for_syntax_error:
+    CALL well_formed_exp_test
+    JC ep_bad_ending_syntax_error
+
+    LEA BX, buffer_linha
+
+ep_test_printing:
+    CMP byte ptr [BX], '*'
+    JNE ep_no_print_this_time
+
+    INC BX
+
+    MOV matrix_must_be_print, 1
+    JMP ep_print_jump
+
+ep_no_print_this_time:
+    MOV matrix_must_be_print, 0
+ep_print_jump:
+
+; Now for sure I'm on an opening bracket
+    CMP byte ptr [BX], '['
+    JNE ep_bad_ending_syntax_error
+    INC BX
+
+; Now for sure I'm on a number (dst)
+    CALL atoi
+
+    CMP AX, 0
+    JS ep_bad_ending_reference_error
+
+    CMP AX, qtd_linhas
+    JNL ep_bad_ending_reference_error
+
+    MOV [BP - 6], AX
+
+; Ok now on a closing bracket 
+    CMP byte ptr [BX], ']'
+    JNE ep_bad_ending_syntax_error
+    INC BX
+
+; Equal sign...
+    CMP byte ptr [BX], '='
+    JNE ep_bad_ending_syntax_error
+    INC BX
+
+; Now I don't know, it can be either a number or a [
+; so... We start to pray for our wfe tester to work
+    CMP byte ptr [BX], '['
+    JNE ep_is_src_one
+    INC BX
+    MOV CH, 0
+
+ep_is_src_one:
+    CALL atoi
+
+    CMP CH, 01h
+    JE ep_is_src_one_skip_validation
+
+    CMP AX, 0
+    JS ep_bad_ending_reference_error
+
+    CMP AX, qtd_linhas
+    JNL ep_bad_ending_reference_error
+
+ep_is_src_one_skip_validation:
+
+    MOV [BP - 8], AX
+
+    ; Now we can either be on a closing bracket
+    ; or the operator
+
+    CMP byte ptr [BX], ']'
+    JNE ep_is_operator
+    INC BX
+
+ep_is_operator:
+    CALL is_operation_listed
+    JC ep_bad_ending_bad_operation
+
+    MOV operation, AL
+
+    CMP byte ptr [BX], '['
+    JNE ep_is_src_two
+    INC BX
+    MOV CL, 0
+
+ep_is_src_two:
+    CALL atoi
+
+    CMP CL, 01h
+    JE ep_is_src_two_skip_validation
+
+    CMP AX, 0
+    JS ep_bad_ending_reference_error
+
+    CMP AX, qtd_linhas
+    JNL ep_bad_ending_reference_error
+
+ep_is_src_two_skip_validation:
+
+    MOV [BP - 10], AX
+
+    JMP ep_good_ending
+
+ep_bad_ending_syntax_error:
+    XOR BX, BX
+    MOV BL, row_counter
+    MOV SI, 1
+
+    JMP ep_whole_ending
+ep_bad_ending_reference_error:
+    XOR BX, BX
+    MOV BL, row_counter
+    MOV SI, 0
+    MOV DI, AX
+
+    JMP ep_whole_ending
+ep_bad_ending_bad_operation:
+    XOR BX, BX
+    MOV BL, row_counter
+    MOV SI, 0
+    MOV DI, AX
+
+    JMP ep_whole_ending
+ep_good_ending:
+
+    MOV BX, [BP - 6]
+    MOV DI, [BP - 8]
+    MOV SI, [BP - 10]
+
+    MOV AX, CX
+
+ep_whole_ending:
+
+    ADD SP, 6
+
+    POP DX
+    POP CX
+    POP BP
+
+    RET
+
+expression_parser ENDP
+
+
+; This function will try to find some things
+; like: [3=[3]+[4]. Did you get it?
+;
+; If a missing bracket is found -> CARRY FLAG
+well_formed_exp_test PROC NEAR
+    PUSH BX
+
+    LEA BX, buffer_linha
+
+    JMP wfe_loop_begin
+
+wfe_a_little_inc:
+    INC BX
+
+wfe_loop_begin:
+    CMP byte ptr [BX], NULLCIFRAO
+    JMP wfe_good_ending
+
+    CMP byte ptr [BX], ']'
+    JE wfe_bad_ending
+
+    CMP byte ptr [BX], '['
+    JE wfe_first_found
+
+    INC BX
+    JMP wfe_loop_begin
+
+    wfe_first_found:
+        INC BX
+        wfe_first_found_loop:
+            CMP byte ptr [BX], NULLCIFRAO
+            JE wfe_bad_ending
+
+            CMP byte ptr [BX], '['
+            JE wfe_bad_ending
+
+            CMP byte ptr [BX], ']'
+            JE wfe_a_little_inc
+
+            INC BX
+            JMP wfe_first_found_loop
+
+wfe_good_ending:
+
+    CLC
+    JMP wfe_ending
+
+wfe_bad_ending:
+
+    STC
+
+wfe_ending:
+
+    POP BX
+
+    RET
+
+well_formed_exp_test ENDP
+
+; It will grab a single character byte ptr [BX] and put aside
+; with the operations table to test if it exists.
+;
+; Returns the char in AX and BX Incremented
+; If it does not exist -> CARRY FLAG
+is_operation_listed PROC NEAR
+
+    MOV AL, byte ptr [BX]
+    XOR AH, AH
+
+    IF UNSIGNED_DIVISION EQ 1
+        CMP AX, '?'
+        JE iol_good_ending
+    ENDIF
+
+    CMP AX, '+'
+    JE iol_good_ending
+
+    CMP AX, '-'
+    JE iol_good_ending
+
+    CMP AX, '*'
+    JE iol_good_ending
+
+    CMP AX, '/'
+    JE iol_good_ending
+
+    CMP AX, '%'
+    JE iol_good_ending
+
+    CMP AX, '&'
+    JE iol_good_ending
+
+    CMP AX, '|'
+    JE iol_good_ending
+
+    CMP AX, '^'
+    JE iol_good_ending
+
+    JMP iol_bad_ending
+
+iol_good_ending:
+    CLC
+    JMP iol_whole_ending
+
+iol_bad_ending:
+    STC
+
+iol_whole_ending:
+
+    INC BX
+
+    RET
+is_operation_listed ENDP
 
 
 ; Fim do programa
