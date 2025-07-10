@@ -34,6 +34,9 @@ buffer_linha db 140 DUP(?),NULLCIFRAO ; 20 colunas, 6 digitos no maximo em cada,
 
 matriz dw 2000 DUP(?) ; MAX_LINHAS * MAX_COLUNAS,
 
+op_source_one dw ?
+op_source_two dw ?
+
 ; Mais dados
 qtd_colunas dw ? ; Aqui vai a quantidade real de colunas que vao ser lidas do arquivo
 qtd_linhas dw ? ; Eh bom saber a quantidade de linhas tambem
@@ -46,18 +49,31 @@ error_flag db ? ; 1-Numero de colunas errado
 
 line_ending db CR,LF
 
+operation db ? ; Each operation is represented by its 
+               ; C op. character (e.g. & == AND)
+
 ; Area de testes
 
 teste_funcao db "12430sdfsuidhf",0
 
 
 .code
-    .startup
+    .startup ; MAIN FUNCTION
 
+    ; Read matrix
     LEA DI, matriz
     CALL read_matrix
     JC main_bad_ending
 
+    ; Operate matrix test
+    MOV AH, 0
+    MOV AL, 1
+    MOV BX, 0
+    MOV DI, 1
+    MOV SI, -2
+    CALL iterator
+
+    ; Print matrix
     MOV BX, qtd_linhas
     MOV CX, qtd_colunas
     LEA SI, matriz
@@ -778,6 +794,215 @@ create_file PROC NEAR
 
     RET
 create_file ENDP
+
+
+; Function to prepare BX, DI, SI to do matrix ops
+; Arguments:
+;   BX = Dst row
+;   DI = Src_1 row
+;   SI = Src_2 row
+;
+; Returns:
+;   All the above LEAd with the rows adresses
+prepare_rows PROC NEAR
+    PUSH BP
+    MOV BP, SP
+
+    PUSH AX ; [BP - 2]
+    PUSH CX ; [BP - 4]
+    PUSH DX ; [BP - 6]
+
+    SUB SP, 2 ; [BP - 8]
+    MOV [BP - 8], AX
+
+    LEA CX, matriz
+
+pl_bx:
+
+    MOV AX, qtd_colunas
+    MOV DX, 2
+    MUL DX
+    MUL BX
+    ADD AX, CX
+
+    MOV BX, AX
+    XOR DX, DX
+
+pl_bx_end:
+
+    MOV AX, [BP - 8]
+    CMP AH, 1
+    JE pl_di_end
+
+pl_di:
+    MOV AX, qtd_colunas
+    MOV DX, 2
+    MUL DX
+    MUL DI
+    ADD AX, CX
+
+    MOV DI, AX
+    XOR DX, DX
+
+pl_di_end:
+
+    MOV AX, [BP - 8]
+    CMP AL, 1
+    JE pl_si_end
+
+pl_si:
+    MOV AX, qtd_colunas
+    MOV DX, 2
+    MUL DX
+    MUL SI
+    ADD AX, CX
+
+    MOV SI, AX
+    XOR DX, DX
+
+pl_si_end:
+
+pl_ending:
+
+    ADD SP, 2
+    POP DX
+    POP CX
+    POP AX
+    POP BP
+
+    RET
+prepare_rows ENDP
+
+
+; Function to iterate through a row of a matrix
+; to do a set of operations (SIMD alike)
+;
+; Arguments:
+;   AH/L = 1 if H-src1, L-src2 -> Constant; 0 if row reference 
+;   BX = dst row
+;   DI = src1 row
+;   SI = src2 row
+;   DS:operation = Operation to be done
+;
+; No return
+iterator PROC NEAR
+    PUSH BP
+    MOV BP, SP
+
+    PUSH CX ; [BP - 2]
+    MOV CX, qtd_colunas
+
+    CALL prepare_rows
+
+    CMP AX, 00h
+    JE it_case_0 ; No constant
+
+    CMP AX, 10h
+    JE it_case_1 ; src1 constant
+
+    CMP AX, 01h
+    JE it_case_2 ; src2 costant
+
+    CMP AX, 11h
+    JE it_case_3 ; both constants
+
+it_case_0:
+
+    it_case_0_loop:
+        CALL operate
+        ADD BX, 2
+        ADD DI, 2
+        ADD SI, 2
+
+        LOOP it_case_0_loop
+
+    it_case_0_loop_end:
+
+    JMP it_def_ending
+
+; Gambiarra
+
+
+it_case_2: ; Swap DI <-> SI, to use the same case
+    MOV AX, SI
+    MOV SI, DI
+    MOV DI, AX
+
+    JMP it_case_1
+
+it_case_1:
+
+    MOV op_source_one, DI
+    LEA DI, op_source_one
+
+    it_case_1_loop:
+        CALL operate
+        ADD BX, 2
+        ADD SI, 2
+
+        LOOP it_case_1_loop
+
+    it_case_1_loop_end:
+
+    MOV DI, op_source_one
+
+    JMP it_def_ending
+
+it_case_3:
+
+    MOV op_source_one, DI
+    MOV op_source_two, SI
+
+    LEA DI, op_source_one
+    LEA SI, op_source_two
+
+    it_case_3_loop:
+        CALL operate
+        ADD BX, 2
+
+        LOOP it_case_3_loop
+
+    it_case_3_loop_end:
+
+    MOV DI, op_source_one
+    MOV SI, op_source_two
+
+it_def_ending:
+
+    POP CX
+    POP BP
+
+    RET
+iterator ENDP
+
+; WARNING ;
+;
+; THE FUCNTION BELOW IS THIS WAY FOR TESTING PURPOSES
+; IT WILL BE FIXED 
+;
+; This function applies an operation in the following way:
+; [dst] = [src1] + [src2]
+operate PROC NEAR
+
+    PUSH AX
+    PUSH CX
+    PUSH DX
+
+; TESTING
+    MOV AX, word ptr [DI]
+    IMUL word ptr [SI]
+
+    MOV word ptr [BX], AX
+
+; TESTING
+
+    POP DX
+    POP CX
+    POP AX
+
+    RET
+operate ENDP
+
 
 ; Fim do programa
 
