@@ -11,12 +11,15 @@ TARGET_POSIX EQU 1
 ; dados seja escrito no Linux/MacOS, tem que deixar esse EQU 1.
 ; Se for no Windows, coloca um 0.
 
-UNSIGNED_DIVISION EQU 0
+UNSIGNED_DIVISION EQU 1
 ; This will turn the unsigned division operator (?) on
 ; and off, I created this to work around the remainder
 ; specs (Resto da divisao -> SIGNED OR NOT?). If it is
 ; unsigned, congratulations, one more op. If it is not,
 ; just turn the switch off.
+
+ERASE_RESULT_EVERY_TIME EQU 0
+; Will only show the final matrix
 
 CR EQU 13
 LF EQU 10
@@ -50,6 +53,8 @@ qtd_linhas dw ? ; Eh bom saber a quantidade de linhas tambem
 
 erro_colunas db "ALGUMA LINHA TEM O NUMERO ERRADO DE COLUNAS",NULLCIFRAO
 
+tudo_certo db "Tudo certo!!",NULLCIFRAO
+
 error_flag db ? ; 1-Numero de colunas errado
                 ; 2-Referencia invalida
                 ; 3-Operacao invalida
@@ -65,36 +70,62 @@ row_counter db 0
 
 ; Area de testes
 
-teste_funcao db "12430sdfsuidhf",0
-
-
 .code
     .startup ; MAIN FUNCTION
 
-    ; Read matrix
-    LEA DI, matriz
-    CALL read_matrix
-    JC main_bad_ending
+    problem_solved:
 
-    ; Operate matrix test
-    MOV operation, '%'
-    MOV AH, 0
-    MOV AL, 1
-    MOV BX, 0
-    MOV DI, 1
-    MOV SI, -2
-    CALL iterator
+        LEA DX, nome_arq_res
+        call create_file
 
-    ; Print matrix
-    MOV BX, qtd_linhas
-    MOV CX, qtd_colunas
-    LEA SI, matriz
-    LEA DI, buffer_linha
-    LEA DX, nome_arq_res
+        ; Read matrix
+        LEA DI, matriz
+        CALL read_matrix
+        JC main_bad_ending
 
-    call print_matrix
+        MOV AL, 00h
+        LEA DX, nome_arq_expr
+        CALL open_file
+        ; AX has now the expr file handle
 
-main_bad_ending:
+        PUSH BP
+        MOV BP, SP
+        PUSH AX
+
+    read_expressions_and_operate_loop:
+
+        MOV AX, [BP - 2]
+
+        CALL read_row
+        JC main_good_ending
+
+        CALL expression_parser
+        JC main_bad_ending
+
+        CALL iterator
+
+        CALL print_matrix_wrapper
+
+        JMP read_expressions_and_operate_loop
+
+    read_expressions_and_operate_loop_end:
+
+
+    main_bad_ending:
+        CALL error_handling
+        JMP main_whole_ending
+
+    main_good_ending:
+        MOV AH, 09h
+        LEA DX, tudo_certo
+
+        INT 21h
+
+    main_whole_ending:
+        POP BX
+        POP BP
+        ; HANDLE TEM QUE ESTAR NO BX
+        CALL close_file
 
     .exit
 
@@ -633,12 +664,14 @@ print_matrix PROC NEAR
     ; 6 = DI (que guarda o buffer de string)
     ; 8 = rows number
 
-    MOV AL, 02h ; Read and write
-    CALL open_file
-    ; AX now has the file handle
-    ; or CF is set
+    IF ERASE_RESULT_EVERY_TIME EQ 0
+        MOV AL, 02h ; Read and write
+        CALL open_file
+        ; AX now has the file handle
+        ; or CF is set
 
-    JNC pm_file_exists
+        JNC pm_file_exists
+    ENDIF
 
 pm_file_create:
 
@@ -648,6 +681,9 @@ pm_file_create:
     CALL create_file
 
     POP DX
+
+    MOV AL, 02h
+    CALL open_file
 
     JMP pm_file_create_jump_label
 
@@ -1128,7 +1164,7 @@ op_no_changes_end:
 operate ENDP
 
 
-; This function won't require any operands
+; This function won't require any arguments
 ; but it suppose the file is open for reading at least
 ; it will set the correct values for:
 ;   BX = Dst
@@ -1441,6 +1477,94 @@ iol_whole_ending:
     RET
 is_operation_listed ENDP
 
+; BETA TESTING ONLY
+error_handling PROC NEAR
+
+    MOV AH, 09h
+    LEA DX, erro_colunas
+
+    INT 21h
+
+    RET
+error_handling ENDP
+
+
+; This is wrapper to print the line that called a print
+; above the matrix printed
+; YOU MUST PASS THE AX AS THE FILE HANDLE !!!!
+print_matrix_wrapper PROC NEAR
+
+    CMP matrix_must_be_print, 0
+    JE pmw_no_print
+
+    PUSH AX
+    PUSH BX
+    PUSH CX
+    PUSH SI
+    PUSH DI
+    PUSH DX
+
+pmw_printing_line:
+
+    MOV AL, 02h
+    LEA DX, nome_arq_res
+    CALL open_file
+
+    CALL move_handle_ptr_to_end
+
+    MOV BX, AX
+    LEA DI, buffer_linha
+    XOR CX, CX
+    MOV DX, DI
+
+    pmw_strlen_begin:
+        CMP byte ptr [DI], NULLCIFRAO
+        JE pmw_strlen_end
+        INC CX
+        INC DI
+
+        JMP pmw_strlen_begin
+
+    pmw_strlen_end:
+
+        IF TARGET_POSIX EQ 0
+            MOV byte ptr [DI], CR
+            INC CX ; Aqui eu vou reservar mais um byte no
+            INC DI
+                   ; buffer_linha, pra evitar invadir memoria
+        ENDIF
+
+        MOV byte ptr [DI], LF
+        INC CX ; BX, CX and DX ready
+
+        XOR AX, AX
+        MOV AH, 40h
+
+        INT 21h
+
+
+    call close_file
+
+pmw_printing_matrix:
+    MOV BX, [qtd_linhas]
+    MOV CX, [qtd_colunas]
+    LEA SI, matriz
+    LEA DI, buffer_linha
+    LEA DX, nome_arq_res
+
+    CALL print_matrix
+
+    POP DX
+    POP DI
+    POP SI
+    POP CX
+    POP BX
+    POP AX
+
+pmw_no_print:
+
+    RET
+print_matrix_wrapper ENDP
 
 ; Fim do programa
 
