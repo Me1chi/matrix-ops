@@ -51,13 +51,9 @@ op_source_two dw ?
 qtd_colunas dw ? ; Aqui vai a quantidade real de colunas que vao ser lidas do arquivo
 qtd_linhas dw ? ; Eh bom saber a quantidade de linhas tambem
 
-erro_colunas db "ALGUMA LINHA TEM O NUMERO ERRADO DE COLUNAS",NULLCIFRAO
+tudo_certo db "Operations done successfully!",NULLCIFRAO
 
-tudo_certo db "Tudo certo!!",NULLCIFRAO
-
-error_flag db ? ; 1-Numero de colunas errado
-                ; 2-Referencia invalida
-                ; 3-Operacao invalida
+error_flag db 0 ; 1-Numero de colunas errado
 
 line_ending db CR,LF
 
@@ -66,7 +62,17 @@ operation db ? ; Each operation is represented by its
 
 matrix_must_be_print db 0
 
+
+; Error handling data
+
 row_counter db 0
+
+erro_colunas db "Wrong number of columns in row: ",NULLCIFRAO
+syntax_error_text db "Syntax error in line: ",NULLCIFRAO
+bad_operation_error db "Unknown operation: ",NULLCIFRAO
+bad_reference_error db "Invalid row: ",NULLCIFRAO
+
+operation_or_reference_error_ending db CR,LF,"In line: ",NULLCIFRAO
 
 ; Area de testes
 
@@ -82,6 +88,7 @@ row_counter db 0
         LEA DI, matriz
         CALL read_matrix
         JC main_bad_ending
+        MOV row_counter, 0
 
         MOV AL, 00h
         LEA DX, nome_arq_expr
@@ -101,6 +108,8 @@ row_counter db 0
 
         CALL expression_parser
         JC main_bad_ending
+
+        INC row_counter ; Error handling feature!!
 
         CALL iterator
 
@@ -262,11 +271,16 @@ open_file ENDP
 ; It will close the file which handle is in BX
 close_file PROC NEAR
 
+    PUSHF
     PUSH AX
+    PUSH DX
+
     MOV AH, 3Eh
     INT 21h
 
+    POP DX
     POP AX
+    POPF
 
     RET
 
@@ -394,6 +408,8 @@ read_row ENDP
 ; Returns: 
 ; DI = matrix[i + 1]
 ; or error
+;  IF ERROR:
+;   SI = -1
 ;
 parse_row PROC NEAR
 
@@ -440,7 +456,7 @@ pr_end_loop:
 
     pr_carry:
     STC
-    MOV error_flag, 1
+    MOV SI, -1
 
 pr_ending:
     POP DX
@@ -462,14 +478,18 @@ parse_row ENDP
 ;
 ; Returns:
 ;   full-filled matrix and maybe a CARRY FLAG
+;
+; PS:
+;   IF THE CARRY FLAG IS SET, THE FAULTY ROW
+;   WILL BE IN THE BX REGISTER
 read_matrix PROC NEAR
     CLC
 
-    PUSH SI
     PUSH AX
     PUSH BX
     PUSH CX
     PUSH DX
+    PUSH SI
 
 rm_open_file:
 
@@ -481,11 +501,15 @@ rm_open_file:
     LEA DI, qtd_colunas
 
     CALL read_row
-    CALL parse_row
+    CALL parse_row ; Aqui ta um pouco melhor escrito mas
+                   ; nada que quebre o codigo.
+    LEA SI, buffer_linha
 
     LEA DI, matriz
 
     XOR CX, CX
+
+    MOV row_counter, 0
 
 rm_begin_loop:
     CALL read_row
@@ -503,31 +527,50 @@ rm_loop_test:
 
     JC rm_ending_loop; SO SAI DO LOOP NESSA CONDICAO, O RESTO EH ERRO
 
+    INC row_counter
+
     JMP rm_begin_loop
 
 rm_ending_loop:
+    CLC
     JMP rm_end
 
 rm_bad_ending:
-    MOV AH, 09h
-    LEA DX, erro_colunas
-
-    INT 21h
-
     STC
 
-    ADD SP, 2
+    MOV DX, SI
+
+    INC SP
+    INC SP
 
 rm_end:
     MOV qtd_linhas, CX
     MOV BX, AX
     CALL close_file
 
+    POP SI
+
+    JNC rm_not_carry_flag_part_two
+
+    MOV SI, DX
+
+rm_not_carry_flag_part_two:
+
     POP DX
     POP CX
     POP BX
+
+; Aqui vai preservar o BX se a carry flag nao tiver setada
+
+    JNC rm_not_carry_flag
+
+    MOV BL, row_counter
+    XOR BH, BH
+
+    STC
+
+rm_not_carry_flag:
     POP AX
-    POP SI
 
     RET
 
@@ -535,11 +578,15 @@ read_matrix ENDP
 
 
 ; This function will take a number in compliment of 2
+; 16 bits.
 ; and format it to a string (in decimal, for sure)
 ;
 ; Arguments:
 ;   AX = the number
 ;   DI = the string adress
+; WARNING:
+; THE CALLER PUTS THE NULLCIFRAO TERMINATOR
+; with MOV [DI], NULLCIFRAO
 sprintf PROC NEAR
 
     PUSH BX
@@ -1179,7 +1226,8 @@ operate ENDP
 ;   If the carry flag is set == ERROR:
 ;     BX = Line with the error
 ;     DI = Wrong operation char or impossible reference
-;     SI = If = 1, syntax error, If = 0, look at DI
+;     SI = If = 1, syntax error, If = 0, Wrong operation
+;       If = 2, impossible reference
 ;
 ; Moreover:
 ;   The function require the file to be well written,
@@ -1331,7 +1379,7 @@ ep_bad_ending_syntax_error:
 ep_bad_ending_reference_error:
     XOR BX, BX
     MOV BL, row_counter
-    MOV SI, 0
+    MOV SI, 2
     MOV DI, AX
 
     JMP ep_whole_ending
@@ -1484,21 +1532,8 @@ iol_whole_ending:
     RET
 is_operation_listed ENDP
 
-; BETA TESTING ONLY
-error_handling PROC NEAR
-
-    MOV AH, 09h
-    LEA DX, erro_colunas
-
-    INT 21h
-
-    RET
-error_handling ENDP
-
-
-; This is wrapper to print the line that called a print
+; This is a wrapper to print the line that called a print
 ; above the matrix printed
-; YOU MUST PASS THE AX AS THE FILE HANDLE !!!!
 print_matrix_wrapper PROC NEAR
 
     CMP matrix_must_be_print, 0
@@ -1572,6 +1607,145 @@ pmw_no_print:
 
     RET
 print_matrix_wrapper ENDP
+
+
+; This function will handle the errors (the carry flags)
+; you wouldn't have to worry about the arguments, bc
+; everytime a function throw the error, the detailed
+; logs will already be in the right registers
+error_handling PROC NEAR
+
+    PUSH AX
+    PUSH BX
+    PUSH CX
+    PUSH DX
+    PUSH SI
+    PUSH DI
+
+    MOV CX, BX
+
+    CMP SI, -1
+    JE eh_wrong_column_number_error
+
+    CMP SI, 1
+    JE eh_bad_syntax_error
+
+    CMP SI, 0
+    JE eh_bad_operation_error
+
+    CMP SI, 2
+    JE eh_bad_reference_error
+
+    JMP eh_error_handling_end
+
+eh_wrong_column_number_error:
+
+    MOV AH, 09h
+    LEA DX, erro_colunas
+    INT 21h
+
+    MOV AX, CX
+    LEA DI, buffer_linha
+
+    CALL sprintf
+    MOV byte ptr [DI], NULLCIFRAO
+
+    LEA DX, buffer_linha
+    MOV AH, 09h
+    INT 21h
+
+    JMP eh_error_handling_end
+
+eh_bad_reference_error:
+
+    MOV AH, 09h
+    LEA DX, bad_reference_error
+    INT 21h
+
+    MOV AX, DI
+    LEA DI, buffer_linha
+
+    CALL sprintf
+    MOV [DI], NULLCIFRAO
+
+    LEA DX, buffer_linha
+    MOV AH, 09h
+    INT 21h
+
+    MOV AH, 09h
+    LEA DX, operation_or_reference_error_ending
+    INT 21h
+
+    MOV AX, CX
+    LEA DI, buffer_linha
+
+    CALL sprintf
+    MOV [DI], NULLCIFRAO
+
+    LEA DX, buffer_linha
+    MOV AH, 09h
+    INT 21h
+
+    JMP eh_error_handling_end
+
+eh_bad_operation_error:
+
+    MOV AH, 09h
+    LEA DX, bad_operation_error
+    INT 21h
+
+    MOV DX, DI
+    XOR DH, DH
+    MOV AH, 02h
+    INT 21h
+
+    MOV AH, 09h
+    LEA DX, operation_or_reference_error_ending
+    INT 21h
+
+    MOV AX, CX
+    LEA DI, buffer_linha
+
+    CALL sprintf
+    MOV [DI], NULLCIFRAO
+
+    LEA DX, buffer_linha
+    MOV AH, 09h
+    INT 21h
+
+    JMP eh_error_handling_end
+
+eh_bad_syntax_error:
+
+    MOV AH, 09h
+    LEA DX, syntax_error_text
+
+    INT 21h
+
+    MOV AX, CX
+    LEA DI, buffer_linha
+
+    CALL sprintf
+    MOV [DI], NULLCIFRAO
+
+    LEA DX, buffer_linha
+    MOV AH, 09h
+    INT 21h
+
+    JMP eh_error_handling_end
+
+eh_error_handling_end:
+
+    POP DI
+    POP SI
+    POP DX
+    POP CX
+    POP BX
+    POP AX
+
+    RET
+error_handling ENDP
+
 
 ; Fim do programa
 
