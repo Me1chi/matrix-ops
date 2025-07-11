@@ -71,6 +71,7 @@ erro_colunas db "Wrong number of columns in row: ",NULLCIFRAO
 syntax_error_text db "Syntax error in line: ",NULLCIFRAO
 bad_operation_error db "Unknown operation: ",NULLCIFRAO
 bad_reference_error db "Invalid row: ",NULLCIFRAO
+invalid_number_of_columns db "Invalid number of columns: ",NULLCIFRAO
 
 operation_or_reference_error_ending db CR,LF,"In line: ",NULLCIFRAO
 
@@ -501,8 +502,13 @@ rm_open_file:
     LEA DI, qtd_colunas
 
     CALL read_row
-    CALL parse_row ; Aqui ta um pouco melhor escrito mas
+    CALL parse_row ; Aqui ta um pouco mal escrito mas
                    ; nada que quebre o codigo.
+    CMP word ptr [qtd_colunas], MAX_COLUNAS
+    JG rm_critical_bad_ending
+    CMP word ptr [qtd_colunas], 1
+    JL rm_critical_bad_ending
+
     LEA SI, buffer_linha
 
     LEA DI, matriz
@@ -571,7 +577,20 @@ rm_not_carry_flag_part_two:
 
 rm_not_carry_flag:
     POP AX
+    JMP rm_definitive_ending
 
+rm_critical_bad_ending:
+
+    POP SI
+    POP DX
+    POP CX
+    POP BX
+    POP AX
+
+    MOV BX, -1
+    STC
+
+rm_definitive_ending:
     RET
 
 read_matrix ENDP
@@ -1624,8 +1643,11 @@ error_handling PROC NEAR
 
     MOV CX, BX
 
+    CMP CX, -1
+    JE eh_wrong_column_number_error_critical
+
     CMP SI, -1
-    JE eh_wrong_column_number_error
+    JE eh_wrong_column_number_error_fine
 
     CMP SI, 1
     JE eh_bad_syntax_error
@@ -1638,8 +1660,25 @@ error_handling PROC NEAR
 
     JMP eh_error_handling_end
 
-eh_wrong_column_number_error:
+eh_wrong_column_number_error_critical:
 
+    MOV AH, 09h
+    LEA DX, invalid_number_of_columns
+    INT 21h
+
+    MOV AX, [qtd_colunas]
+    LEA DI, buffer_linha
+
+    CALL sprintf
+    MOV byte ptr [DI], NULLCIFRAO
+
+    LEA DX, buffer_linha
+    MOV AH, 09h
+    INT 21h
+
+    JMP eh_error_handling_end
+
+eh_wrong_column_number_error_fine:
     MOV AH, 09h
     LEA DX, erro_colunas
     INT 21h
